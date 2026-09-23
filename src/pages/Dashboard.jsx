@@ -1,4 +1,5 @@
 import {useEffect, useMemo, useState} from 'react';
+import {useAuth} from '../hooks/useAuth';
 import JobFilter from '../components/jobs/JobFilter';
 import JobForm from '../components/jobs/JobForm';
 import JobList from '../components/jobs/JobList';
@@ -7,14 +8,28 @@ import {createJobId} from '../utils/jobs';
 import {loadApplications, saveApplications} from '../utils/storage';
 
 export default function Dashboard() {
-  const [applications, setApplications] = useState(loadApplications);
+  const {user} = useAuth();
+  const [applications, setApplications] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [editingApplication, setEditingApplication] = useState(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
   useEffect(() => {
-    saveApplications(applications);
-  }, [applications]);
+    let active = true;
+    setLoaded(false);
+    loadApplications(user.id).then((loadedApplications) => {
+      if (active) {
+        setApplications(loadedApplications);
+        setLoaded(true);
+      }
+    });
+    return () => { active = false; };
+  }, [user.id]);
+
+  useEffect(() => {
+    if (loaded) saveApplications(user.id, applications).catch(() => {});
+  }, [applications, loaded, user.id]);
 
   const filteredApplications = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();

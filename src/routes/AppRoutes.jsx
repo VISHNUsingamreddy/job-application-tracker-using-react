@@ -8,12 +8,14 @@ import Login from '../pages/Login';
 import Register from '../pages/Register';
 
 function HomeRedirect() {
-  const {isAuthenticated} = useAuth();
+  const {isAuthenticated, authLoading} = useAuth();
+  if (authLoading) return null;
   return <Navigate to={isAuthenticated ? '/dashboard' : '/login'} replace />;
 }
 
 function PublicOnlyRoute() {
-  const {isAuthenticated} = useAuth();
+  const {isAuthenticated, authLoading} = useAuth();
+  if (authLoading) return <Outlet />;
   return isAuthenticated ? <Navigate to="/dashboard" replace /> : <Outlet />;
 }
 

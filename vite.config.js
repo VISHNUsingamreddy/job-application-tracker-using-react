@@ -6,6 +6,7 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    base: 'job-application-tracker-using-react/',
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('.', import.meta.url)),

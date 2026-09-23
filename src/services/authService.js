@@ -1,94 +1,72 @@
-import {readStorage, removeStorage, writeStorage} from '../utils/storage';
-
-const USERS_KEY = 'job_tracker_users_v1';
-const SESSION_KEY = 'job_tracker_auth_session_v1';
+import {
+  browserLocalPersistence,
+  browserSessionPersistence,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  setPersistence,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+} from 'firebase/auth';
+import {get, ref, set} from 'firebase/database';
+import {auth, database} from './firebase';
 
 function normalizeEmail(email) {
   return email.trim().toLocaleLowerCase();
 }
 
-function getUsers() {
-  const users = readStorage(USERS_KEY, []);
-  if (!Array.isArray(users)) return [];
-
-  return users.filter((user) => {
-    if (!user || typeof user !== 'object') return false;
-    const candidate = user;
-    return (
-      typeof candidate.id === 'string' &&
-      typeof candidate.fullName === 'string' &&
-      typeof candidate.email === 'string' &&
-      typeof candidate.password === 'string'
-    );
-  });
+function toAuthUser(user, profile = {}) {
+  return {id: user.uid, fullName: profile.fullName || user.displayName || '', email: user.email};
 }
 
-function toAuthUser(user) {
-  return {id: user.id, fullName: user.fullName, email: user.email};
+function firebaseMessage(error, fallback) {
+  if (error.code === 'auth/email-already-in-use') return 'An account with this email already exists.';
+  if (error.code === 'auth/invalid-credential' || error.code === 'auth/invalid-login-credentials') {
+    return 'Email or password is incorrect.';
+  }
+  return fallback;
 }
 
-function createUserId() {
-  return typeof crypto.randomUUID === 'function'
-    ? `user_${crypto.randomUUID()}`
-    : `user_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+export async function registerUser(input) {
+  try {
+    const email = normalizeEmail(input.email);
+    const credential = await createUserWithEmailAndPassword(auth, email, input.password);
+    const fullName = input.fullName.trim();
+    await updateProfile(credential.user, {displayName: fullName});
+    await set(ref(database, `users/${credential.user.uid}`), {fullName, email});
+    return {success: true, user: toAuthUser(credential.user, {fullName})};
+  } catch (error) {
+    return {success: false, message: firebaseMessage(error, 'Your account could not be created.')};
+  }
 }
 
-export function registerUser(input) {
-  const users = getUsers();
-  const email = normalizeEmail(input.email);
-
-  if (users.some((user) => normalizeEmail(user.email) === email)) {
-    return {success: false, message: 'An account with this email already exists.'};
+export async function loginUser(input) {
+  try {
+    await setPersistence(auth, input.rememberMe ? browserLocalPersistence : browserSessionPersistence);
+    const credential = await signInWithEmailAndPassword(auth, normalizeEmail(input.email), input.password);
+    const snapshot = await get(ref(database, `users/${credential.user.uid}`));
+    return {success: true, user: toAuthUser(credential.user, snapshot.val() || {})};
+  } catch (error) {
+    return {success: false, message: firebaseMessage(error, 'Email or password is incorrect.')};
   }
-
-  // Demo only: passwords are intentionally stored as plain text in localStorage.
-  // Replace this service with a backend before using authentication in production.
-  const user = {
-    id: createUserId(),
-    fullName: input.fullName.trim(),
-    email,
-    password: input.password,
-  };
-
-  if (!writeStorage(USERS_KEY, [...users, user])) {
-    return {success: false, message: 'Your browser could not save this account.'};
-  }
-
-  return {success: true, user: toAuthUser(user)};
-}
-
-export function loginUser(input) {
-  const email = normalizeEmail(input.email);
-  const user = getUsers().find(
-    (candidate) => normalizeEmail(candidate.email) === email && candidate.password === input.password,
-  );
-
-  if (!user) {
-    return {success: false, message: 'Email or password is incorrect.'};
-  }
-
-  const authUser = toAuthUser(user);
-  logoutUser();
-  const target = input.rememberMe ? localStorage : sessionStorage;
-  if (!writeStorage(SESSION_KEY, authUser, target)) {
-    return {success: false, message: 'Your browser could not start a session.'};
-  }
-
-  return {success: true, user: authUser};
 }
 
 export function logoutUser() {
-  removeStorage(SESSION_KEY, localStorage);
-  removeStorage(SESSION_KEY, sessionStorage);
+  return signOut(auth);
 }
 
-export function getCurrentUser() {
-  const user = readStorage(SESSION_KEY, null, localStorage)
-    ?? readStorage(SESSION_KEY, null, sessionStorage);
+export function subscribeToAuth(callback) {
+  return onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+      callback(null);
+      return;
+    }
 
-  return user && typeof user.id === 'string' && typeof user.email === 'string' ? user : null;
-}
-
-export function isLoggedIn() {
-  return getCurrentUser() !== null;
+    try {
+      const snapshot = await get(ref(database, `users/${user.uid}`));
+      callback(toAuthUser(user, snapshot.val() || {}));
+    } catch {
+      callback(toAuthUser(user));
+    }
+  });
 }
